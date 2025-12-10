@@ -1,531 +1,960 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { Search, Upload, X, ChevronDown, FileText, Trash2, Copy, Loader } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Gamepad2, RotateCcw, Home, Loader, Volume2, VolumeX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import parseLLMJson from '@/utils/jsonParser'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
-interface Document {
+const GAME_MASTER_ID = '6939a7a6918f0918e0025f1e'
+
+// Game types
+type GameType = 'home' | 'tictactoe' | 'memory' | 'number'
+
+// Tic Tac Toe Game
+interface TicTacToeState {
+  board: (string | null)[]
+  isXNext: boolean
+  winner: string | null
+  draws: number
+  wins: number
+  losses: number
+}
+
+// Memory Game
+interface MemoryCard {
   id: string
-  name: string
-  pages: number
-  uploadDate: string
+  value: string
+  isFlipped: boolean
+  isMatched: boolean
 }
 
-interface Source {
-  citation_number: number
-  document_name: string
-  page_number: string
-  relevant_excerpt: string
-  relevance_score: number
+interface MemoryGameState {
+  cards: MemoryCard[]
+  selectedCards: string[]
+  matchedPairs: number
+  moves: number
+  gameWon: boolean
+  startTime: number
 }
 
-interface SearchResult {
-  answer: string
-  sources: Source[]
-  follow_up_suggestions: string[]
+// Number Guessing Game
+interface NumberGuessState {
+  secretNumber: number
+  guesses: number[]
+  attemptsRemaining: number
+  gameWon: boolean
+  feedback: string
+  played: number
+  won: number
 }
 
-interface ConversationMessage {
-  id: string
-  query: string
-  result: SearchResult
-  timestamp: string
-}
+const cardValues = ['🌟', '🎮', '🎯', '🏆', '🎨', '🎭', '🎪', '🎲']
 
-export default function HomePage() {
-  const [documents, setDocuments] = useState<Document[]>([
-    {
-      id: '1',
-      name: 'Research Paper on AI.pdf',
-      pages: 45,
-      uploadDate: '2025-12-01'
-    },
-    {
-      id: '2',
-      name: 'Machine Learning Basics.pdf',
-      pages: 32,
-      uploadDate: '2025-11-28'
+export default function GameHub() {
+  const [currentGame, setCurrentGame] = useState<GameType>('home')
+  const [totalScore, setTotalScore] = useState(0)
+  const [soundEnabled, setSoundEnabled] = useState(true)
+
+  // Tic Tac Toe state
+  const [tttState, setTttState] = useState<TicTacToeState>({
+    board: Array(9).fill(null),
+    isXNext: true,
+    winner: null,
+    draws: 0,
+    wins: 0,
+    losses: 0
+  })
+  const [tttLoading, setTttLoading] = useState(false)
+
+  // Memory Game state
+  const [memoryState, setMemoryState] = useState<MemoryGameState>({
+    cards: [],
+    selectedCards: [],
+    matchedPairs: 0,
+    moves: 0,
+    gameWon: false,
+    startTime: 0
+  })
+
+  // Number Guessing state
+  const [numberState, setNumberState] = useState<NumberGuessState>({
+    secretNumber: Math.floor(Math.random() * 100) + 1,
+    guesses: [],
+    attemptsRemaining: 7,
+    gameWon: false,
+    feedback: '',
+    played: 0,
+    won: 0
+  })
+  const [numberInput, setNumberInput] = useState('')
+  const [hintMessage, setHintMessage] = useState('')
+  const [hintLoading, setHintLoading] = useState(false)
+
+  // Initialize games
+  useEffect(() => {
+    if (currentGame === 'memory' && memoryState.cards.length === 0) {
+      const shuffledCards = cardValues
+        .flatMap(val => [val, val])
+        .sort(() => Math.random() - 0.5)
+        .map((val, idx) => ({
+          id: String(idx),
+          value: val,
+          isFlipped: false,
+          isMatched: false
+        }))
+      setMemoryState(prev => ({
+        ...prev,
+        cards: shuffledCards,
+        startTime: Date.now()
+      }))
     }
-  ])
-  const [conversation, setConversation] = useState<ConversationMessage[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [showSidebar, setShowSidebar] = useState(false)
-  const [expandedSourceId, setExpandedSourceId] = useState<string | null>(null)
-  const [uploadingFiles, setUploadingFiles] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const uploadZoneRef = useRef<HTMLDivElement>(null)
-  const resultsRef = useRef<HTMLDivElement>(null)
+  }, [currentGame])
 
-  // Handle drag and drop
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (uploadZoneRef.current) {
-      uploadZoneRef.current.classList.add('border-purple-500', 'bg-purple-50', 'dark:bg-purple-950')
+  // Play sound effect
+  const playSound = (type: 'success' | 'error' | 'match') => {
+    if (!soundEnabled) return
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+
+    if (type === 'success') {
+      oscillator.frequency.value = 800
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1)
+      oscillator.start(audioContext.currentTime)
+      oscillator.stop(audioContext.currentTime + 0.1)
+    } else if (type === 'error') {
+      oscillator.frequency.value = 300
+      gainNode.gain.setValueAtTime(0.2, audioContext.currentTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2)
+      oscillator.start(audioContext.currentTime)
+      oscillator.stop(audioContext.currentTime + 0.2)
+    } else if (type === 'match') {
+      oscillator.frequency.value = 600
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime)
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15)
+      oscillator.start(audioContext.currentTime)
+      oscillator.stop(audioContext.currentTime + 0.15)
     }
   }
 
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (uploadZoneRef.current) {
-      uploadZoneRef.current.classList.remove('border-purple-500', 'bg-purple-50', 'dark:bg-purple-950')
+  // Tic Tac Toe handlers
+  const calculateWinner = (squares: (string | null)[]): string | null => {
+    const lines = [
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+      [0, 3, 6],
+      [1, 4, 7],
+      [2, 5, 8],
+      [0, 4, 8],
+      [2, 4, 6]
+    ]
+    for (let line of lines) {
+      const [a, b, c] = line
+      if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
+        return squares[a]
+      }
     }
+    return null
   }
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    if (uploadZoneRef.current) {
-      uploadZoneRef.current.classList.remove('border-purple-500', 'bg-purple-50', 'dark:bg-purple-950')
-    }
-    handleFiles(e.dataTransfer.files)
-  }
+  const handleTttClick = async (index: number) => {
+    if (tttLoading || tttState.board[index] || tttState.winner) return
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      handleFiles(e.target.files)
-    }
-  }
+    const newBoard = [...tttState.board]
+    newBoard[index] = 'X'
 
-  const handleFiles = async (files: FileList) => {
-    const pdfFiles = Array.from(files).filter(f => f.type === 'application/pdf')
-
-    if (pdfFiles.length === 0) {
+    const winner = calculateWinner(newBoard)
+    if (winner === 'X') {
+      playSound('success')
+      setTttState(prev => ({
+        ...prev,
+        board: newBoard,
+        winner: 'X',
+        wins: prev.wins + 1
+      }))
+      setTotalScore(prev => prev + 10)
       return
     }
 
-    setUploadingFiles(true)
-
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 1500))
-
-    // Add new documents
-    const newDocs = pdfFiles.map((file, idx) => ({
-      id: String(Date.now() + idx),
-      name: file.name,
-      pages: Math.floor(Math.random() * 40) + 5,
-      uploadDate: new Date().toISOString().split('T')[0]
-    }))
-
-    setDocuments(prev => [...prev, ...newDocs])
-    setUploadingFiles(false)
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    if (!searchQuery.trim() || documents.length === 0) {
+    if (newBoard.every(cell => cell !== null)) {
+      playSound('match')
+      setTttState(prev => ({
+        ...prev,
+        board: newBoard,
+        draws: prev.draws + 1
+      }))
       return
     }
 
-    setLoading(true)
+    setTttState(prev => ({ ...prev, board: newBoard, isXNext: false }))
+    setTttLoading(true)
 
     try {
       const response = await fetch('/api/agent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: searchQuery,
-          agent_id: '69306aa076a9e921f94889f5',
-          conversation_context: conversation.map(msg => ({
-            query: msg.query,
-            answer: msg.result.answer
+          message: `Current Tic-Tac-Toe board state: ${JSON.stringify(newBoard)}. Player (X) just moved to position ${index}. Calculate the optimal next move for AI (O). Return the move as {"move": [row, col]} where row and col are 0-2.`,
+          agent_id: GAME_MASTER_ID
+        })
+      })
+
+      const data = await response.json()
+
+      if (data.success && data.response) {
+        let moveData = data.response
+        if (typeof data.response === 'string') {
+          try {
+            const jsonMatch = data.response.match(/\[?\s*(\d+)\s*,\s*(\d+)\s*\]?/)
+            if (jsonMatch) {
+              moveData = { move: [parseInt(jsonMatch[1]), parseInt(jsonMatch[2])] }
+            }
+          } catch (e) {
+            console.error('Error parsing move:', e)
+          }
+        }
+
+        if (moveData?.move && Array.isArray(moveData.move)) {
+          const [row, col] = moveData.move
+          const aiIndex = row * 3 + col
+
+          if (newBoard[aiIndex] === null) {
+            const aiBoard = [...newBoard]
+            aiBoard[aiIndex] = 'O'
+
+            const aiWinner = calculateWinner(aiBoard)
+            if (aiWinner === 'O') {
+              playSound('error')
+              setTttState(prev => ({
+                ...prev,
+                board: aiBoard,
+                winner: 'O',
+                losses: prev.losses + 1
+              }))
+            } else if (aiBoard.every(cell => cell !== null)) {
+              playSound('match')
+              setTttState(prev => ({
+                ...prev,
+                board: aiBoard,
+                draws: prev.draws + 1
+              }))
+            } else {
+              playSound('success')
+              setTttState(prev => ({
+                ...prev,
+                board: aiBoard,
+                isXNext: true
+              }))
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error getting AI move:', error)
+    } finally {
+      setTttLoading(false)
+    }
+  }
+
+  const resetTttGame = () => {
+    setTttState({
+      board: Array(9).fill(null),
+      isXNext: true,
+      winner: null,
+      draws: tttState.draws,
+      wins: tttState.wins,
+      losses: tttState.losses
+    })
+  }
+
+  // Memory Game handlers
+  const handleMemoryCardClick = (id: string) => {
+    const card = memoryState.cards.find(c => c.id === id)
+    if (!card || card.isFlipped || card.isMatched || memoryState.selectedCards.length >= 2) return
+
+    const newCards = memoryState.cards.map(c =>
+      c.id === id ? { ...c, isFlipped: true } : c
+    )
+    const newSelectedCards = [...memoryState.selectedCards, id]
+
+    setMemoryState(prev => ({
+      ...prev,
+      cards: newCards,
+      selectedCards: newSelectedCards
+    }))
+
+    if (newSelectedCards.length === 2) {
+      const card1 = newCards.find(c => c.id === newSelectedCards[0])
+      const card2 = newCards.find(c => c.id === newSelectedCards[1])
+
+      if (card1 && card2 && card1.value === card2.value) {
+        playSound('match')
+        setTimeout(() => {
+          setMemoryState(prev => {
+            const updated = prev.cards.map(c =>
+              c.id === newSelectedCards[0] || c.id === newSelectedCards[1]
+                ? { ...c, isMatched: true }
+                : c
+            )
+            const newMatched = prev.matchedPairs + 1
+            const isWon = newMatched === 8
+
+            if (isWon) {
+              playSound('success')
+            }
+
+            return {
+              ...updated,
+              cards: updated,
+              selectedCards: [],
+              matchedPairs: newMatched,
+              moves: prev.moves + 1,
+              gameWon: isWon
+            }
+          })
+
+          if (memoryState.matchedPairs + 1 === 8) {
+            setTotalScore(prev => prev + 20)
+          }
+        }, 600)
+      } else {
+        playSound('error')
+        setTimeout(() => {
+          setMemoryState(prev => ({
+            ...prev,
+            cards: prev.cards.map(c => ({
+              ...c,
+              isFlipped: c.isMatched
+            })),
+            selectedCards: [],
+            moves: prev.moves + 1
           }))
+        }, 1000)
+      }
+    }
+  }
+
+  const resetMemoryGame = () => {
+    const shuffledCards = cardValues
+      .flatMap(val => [val, val])
+      .sort(() => Math.random() - 0.5)
+      .map((val, idx) => ({
+        id: String(idx),
+        value: val,
+        isFlipped: false,
+        isMatched: false
+      }))
+    setMemoryState({
+      cards: shuffledCards,
+      selectedCards: [],
+      matchedPairs: 0,
+      moves: 0,
+      gameWon: false,
+      startTime: Date.now()
+    })
+  }
+
+  // Number Guessing handlers
+  const handleNumberGuess = (e: React.FormEvent) => {
+    e.preventDefault()
+    const guess = parseInt(numberInput)
+
+    if (isNaN(guess) || guess < 1 || guess > 100) {
+      playSound('error')
+      return
+    }
+
+    const newGuesses = [...numberState.guesses, guess]
+    const newAttempts = numberState.attemptsRemaining - 1
+
+    let feedback = ''
+    let isWon = false
+
+    if (guess === numberState.secretNumber) {
+      feedback = 'Correct! You won!'
+      isWon = true
+      playSound('success')
+      setTotalScore(prev => prev + 15)
+    } else if (guess < numberState.secretNumber) {
+      feedback = 'Too low! Try higher.'
+      playSound('error')
+    } else {
+      feedback = 'Too high! Try lower.'
+      playSound('error')
+    }
+
+    setNumberState(prev => ({
+      ...prev,
+      guesses: newGuesses,
+      attemptsRemaining: newAttempts,
+      gameWon: isWon,
+      feedback: feedback,
+      played: prev.played + 1,
+      won: isWon ? prev.won + 1 : prev.won
+    }))
+
+    setNumberInput('')
+    setHintMessage('')
+  }
+
+  const getNumberHint = async () => {
+    if (numberState.gameWon || numberState.attemptsRemaining <= 0) return
+
+    setHintLoading(true)
+
+    try {
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `The secret number is between 1-100. Previous guesses: ${numberState.guesses.join(', ') || 'none yet'}. Give a strategic hint to help guess the secret number.`,
+          agent_id: GAME_MASTER_ID
         })
       })
 
       const data = await response.json()
 
       if (data.success) {
-        const parsedResponse = typeof data.response === 'string'
-          ? parseLLMJson(data.response, {})
-          : data.response
+        const hint = typeof data.response === 'string'
+          ? data.response.substring(0, 200)
+          : data.raw_response?.substring(0, 200) || 'Think strategically about the range!'
 
-        const searchResult: SearchResult = {
-          answer: parsedResponse?.result?.answer ?? 'Unable to process response',
-          sources: Array.isArray(parsedResponse?.result?.sources)
-            ? parsedResponse.result.sources
-            : [],
-          follow_up_suggestions: Array.isArray(parsedResponse?.result?.follow_up_suggestions)
-            ? parsedResponse.result.follow_up_suggestions
-            : []
-        }
-
-        const newMessage: ConversationMessage = {
-          id: String(Date.now()),
-          query: searchQuery,
-          result: searchResult,
-          timestamp: new Date().toISOString()
-        }
-
-        setConversation(prev => [...prev, newMessage])
-        setSearchQuery('')
-
-        // Auto-scroll to results
-        setTimeout(() => {
-          resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        }, 100)
+        setHintMessage(hint)
       }
     } catch (error) {
-      console.error('Search error:', error)
+      console.error('Error getting hint:', error)
+      setHintMessage('Try narrowing down the range!')
     } finally {
-      setLoading(false)
+      setHintLoading(false)
     }
   }
 
-  const deleteDocument = (id: string) => {
-    setDocuments(prev => prev.filter(doc => doc.id !== id))
+  const resetNumberGame = () => {
+    setNumberState({
+      secretNumber: Math.floor(Math.random() * 100) + 1,
+      guesses: [],
+      attemptsRemaining: 7,
+      gameWon: false,
+      feedback: '',
+      played: numberState.played,
+      won: numberState.won
+    })
+    setNumberInput('')
+    setHintMessage('')
   }
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text)
-  }
-
-  const clearConversation = () => {
-    setConversation([])
-  }
-
-  const hasDocuments = documents.length > 0
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-foreground">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-slate-700 bg-slate-900/80 backdrop-blur-sm">
-        <div className="flex items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-purple-600">
-              <FileText className="w-6 h-6 text-white" />
-            </div>
-            <h1 className="text-xl font-semibold">Knowledge Search</h1>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => setShowSidebar(!showSidebar)}
-            className="border-slate-600 hover:bg-slate-800"
-          >
-            Documents ({documents.length})
-          </Button>
-        </div>
-      </header>
-
-      <div className="flex h-[calc(100vh-69px)]">
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <ScrollArea className="flex-1">
-            <div className="p-8">
-              {/* Search Bar - Always visible */}
-              <div className="max-w-3xl mx-auto mb-12">
-                <form onSubmit={handleSearch} className="space-y-4">
-                  <div className="relative group">
-                    <div className="absolute inset-0 bg-gradient-to-r from-purple-600 to-purple-400 rounded-lg opacity-20 group-focus-within:opacity-40 blur transition duration-300" />
-                    <div className="relative flex items-center bg-slate-800 rounded-lg border border-slate-600 group-focus-within:border-purple-500 transition">
-                      <Search className="w-5 h-5 ml-4 text-slate-400" />
-                      <Input
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Ask anything about your documents..."
-                        className="flex-1 bg-transparent border-0 focus:ring-0 text-white placeholder-slate-500 py-6"
-                      />
-                      <Button
-                        type="submit"
-                        disabled={loading || !hasDocuments}
-                        className="mr-2 bg-purple-600 hover:bg-purple-700 text-white"
-                      >
-                        {loading ? (
-                          <Loader className="w-4 h-4 animate-spin" />
-                        ) : (
-                          'Search'
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                  {!hasDocuments && (
-                    <p className="text-center text-sm text-slate-400">
-                      Upload documents to get started
-                    </p>
-                  )}
-                </form>
+  // Home Screen
+  if (currentGame === 'home') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
+        {/* Header */}
+        <header className="sticky top-0 z-40 border-b border-purple-700 bg-purple-900/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto w-full">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500">
+                <Gamepad2 className="w-6 h-6 text-purple-900" />
               </div>
+              <h1 className="text-2xl font-bold text-white">Game Hub</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="px-4 py-2 rounded-lg bg-purple-800 border border-purple-700">
+                <span className="text-sm text-purple-200">Total Score:</span>
+                <span className="ml-2 text-2xl font-bold text-cyan-400">{totalScore}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSoundEnabled(!soundEnabled)}
+                className="border-purple-600 text-purple-100 hover:bg-purple-800"
+              >
+                {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+              </Button>
+            </div>
+          </div>
+        </header>
 
-              {/* Empty State */}
-              {conversation.length === 0 && hasDocuments && (
-                <div className="max-w-3xl mx-auto text-center py-16">
-                  <div className="w-16 h-16 rounded-full bg-purple-600/20 flex items-center justify-center mx-auto mb-4">
-                    <Search className="w-8 h-8 text-purple-400" />
+        {/* Main Content */}
+        <div className="p-8">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-4xl font-bold text-white mb-2">Choose Your Game</h2>
+              <p className="text-purple-200">Pick a game and challenge yourself!</p>
+            </div>
+
+            {/* Game Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {/* Tic Tac Toe Card */}
+              <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-cyan-500/50 hover:border-cyan-400 transition-all hover:shadow-lg hover:shadow-cyan-500/25 cursor-pointer transform hover:scale-105"
+                onClick={() => {
+                  setCurrentGame('tictactoe')
+                  resetTttGame()
+                }}>
+                <div className="p-8 text-center space-y-4">
+                  <div className="text-6xl">⭕</div>
+                  <h3 className="text-2xl font-bold text-white">Tic-Tac-Toe</h3>
+                  <p className="text-purple-200 text-sm">Play against an AI opponent. Make your best moves to win!</p>
+                  <div className="pt-4">
+                    <Button className="w-full bg-cyan-500 hover:bg-cyan-600 text-purple-900 font-bold">
+                      Play Now
+                    </Button>
                   </div>
-                  <h2 className="text-2xl font-semibold mb-2">Start searching your knowledge base</h2>
-                  <p className="text-slate-400">
-                    Ask natural language questions about your uploaded documents to get accurate answers with source citations.
-                  </p>
+                  <div className="pt-2 space-y-1">
+                    <p className="text-xs text-purple-300">
+                      <span className="text-green-400 font-semibold">{tttState.wins}</span> wins
+                    </p>
+                  </div>
                 </div>
-              )}
+              </Card>
 
-              {/* Conversation Results */}
-              <div className="max-w-3xl mx-auto space-y-8" ref={resultsRef}>
-                {conversation.map((message, idx) => (
-                  <div key={message.id} className="space-y-4">
-                    {/* Query */}
-                    <div className="flex justify-end">
-                      <div className="max-w-xl bg-purple-600/20 border border-purple-500/30 rounded-lg px-4 py-3">
-                        <p className="text-white">{message.query}</p>
-                      </div>
-                    </div>
-
-                    {/* Answer */}
-                    <div className="space-y-4">
-                      <Card className="bg-slate-800 border-slate-700 p-6">
-                        <div className="flex items-start justify-between mb-4">
-                          <h3 className="font-semibold text-white">Answer</h3>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => copyToClipboard(message.result.answer)}
-                            className="text-slate-400 hover:text-white"
-                          >
-                            <Copy className="w-4 h-4" />
-                          </Button>
-                        </div>
-                        <div className="text-slate-100 leading-relaxed whitespace-pre-wrap">
-                          {message.result.answer}
-                        </div>
-                      </Card>
-
-                      {/* Sources */}
-                      {message.result.sources.length > 0 && (
-                        <div className="space-y-3">
-                          <h4 className="text-sm font-semibold text-slate-300">Sources</h4>
-                          <div className="grid gap-2">
-                            {message.result.sources.map((source) => {
-                              const sourceKey = `${message.id}-${source.citation_number}`
-                              const isExpanded = expandedSourceId === sourceKey
-
-                              return (
-                                <div key={sourceKey}>
-                                  <button
-                                    onClick={() =>
-                                      setExpandedSourceId(isExpanded ? null : sourceKey)
-                                    }
-                                    className="w-full text-left"
-                                  >
-                                    <Card className="bg-slate-700/50 border-slate-600 hover:bg-slate-700 transition p-4 cursor-pointer">
-                                      <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                          <div className="flex items-center gap-2 mb-2">
-                                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-semibold">
-                                              {source.citation_number}
-                                            </span>
-                                            <span className="font-medium text-white">{source.document_name}</span>
-                                            <span className="text-xs text-slate-400">{source.page_number}</span>
-                                            <span className="text-xs text-slate-400">
-                                              ({Math.round(source.relevance_score * 100)}% match)
-                                            </span>
-                                          </div>
-                                          {!isExpanded && (
-                                            <p className="text-sm text-slate-300 line-clamp-2">
-                                              {source.relevant_excerpt}
-                                            </p>
-                                          )}
-                                        </div>
-                                        <ChevronDown
-                                          className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ml-2 ${
-                                            isExpanded ? 'rotate-180' : ''
-                                          }`}
-                                        />
-                                      </div>
-                                    </Card>
-                                  </button>
-
-                                  {/* Expanded Source */}
-                                  {isExpanded && (
-                                    <Card className="bg-slate-700/30 border-slate-600 p-4 mt-2">
-                                      <p className="text-sm text-slate-200 leading-relaxed">
-                                        {source.relevant_excerpt}
-                                      </p>
-                                    </Card>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Follow-up Suggestions */}
-                      {message.result.follow_up_suggestions.length > 0 && (
-                        <div className="space-y-3 mt-6 pt-6 border-t border-slate-700">
-                          <h4 className="text-sm font-semibold text-slate-300">Suggested follow-ups</h4>
-                          <div className="space-y-2">
-                            {message.result.follow_up_suggestions.map((suggestion, sugIdx) => (
-                              <button
-                                key={sugIdx}
-                                onClick={() => setSearchQuery(suggestion)}
-                                className="w-full text-left px-3 py-2 rounded-lg bg-slate-700/30 hover:bg-slate-700/50 transition text-sm text-slate-200 hover:text-white"
-                              >
-                                {suggestion}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {idx < conversation.length - 1 && (
-                      <Separator className="bg-slate-700/50 my-4" />
-                    )}
+              {/* Memory Match Card */}
+              <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-magenta-500/50 hover:border-magenta-400 transition-all hover:shadow-lg hover:shadow-magenta-500/25 cursor-pointer transform hover:scale-105"
+                onClick={() => {
+                  setCurrentGame('memory')
+                  resetMemoryGame()
+                }}>
+                <div className="p-8 text-center space-y-4">
+                  <div className="text-6xl">🎴</div>
+                  <h3 className="text-2xl font-bold text-white">Memory Match</h3>
+                  <p className="text-purple-200 text-sm">Find matching pairs in this classic memory game. Fast reflexes win!</p>
+                  <div className="pt-4">
+                    <Button className="w-full bg-magenta-500 hover:bg-magenta-600 text-white font-bold">
+                      Play Now
+                    </Button>
                   </div>
+                  <div className="pt-2 space-y-1">
+                    <p className="text-xs text-purple-300">
+                      Test your memory skills
+                    </p>
+                  </div>
+                </div>
+              </Card>
+
+              {/* Number Guessing Card */}
+              <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-lime-500/50 hover:border-lime-400 transition-all hover:shadow-lg hover:shadow-lime-500/25 cursor-pointer transform hover:scale-105"
+                onClick={() => {
+                  setCurrentGame('number')
+                  resetNumberGame()
+                }}>
+                <div className="p-8 text-center space-y-4">
+                  <div className="text-6xl">🎯</div>
+                  <h3 className="text-2xl font-bold text-white">Number Guess</h3>
+                  <p className="text-purple-200 text-sm">Guess the secret number between 1-100. Use hints wisely!</p>
+                  <div className="pt-4">
+                    <Button className="w-full bg-lime-500 hover:bg-lime-600 text-purple-900 font-bold">
+                      Play Now
+                    </Button>
+                  </div>
+                  <div className="pt-2 space-y-1">
+                    <p className="text-xs text-purple-300">
+                      <span className="text-green-400 font-semibold">{numberState.won}/{numberState.played}</span> wins
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Tic Tac Toe Game Screen
+  if (currentGame === 'tictactoe') {
+    const isBoardFull = tttState.board.every(cell => cell !== null)
+    const gameOver = tttState.winner !== null || isBoardFull
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
+        {/* Header */}
+        <header className="sticky top-0 z-40 border-b border-purple-700 bg-purple-900/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto w-full">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500">
+                <Gamepad2 className="w-6 h-6 text-purple-900" />
+              </div>
+              <h1 className="text-2xl font-bold text-white">Game Hub</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="px-4 py-2 rounded-lg bg-purple-800 border border-purple-700">
+                <span className="text-sm text-purple-200">Total Score:</span>
+                <span className="ml-2 text-2xl font-bold text-cyan-400">{totalScore}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Game Screen */}
+        <div className="p-8">
+          <div className="max-w-2xl mx-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-2">Tic-Tac-Toe</h2>
+
+            {/* Game Board */}
+            <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-cyan-500 p-8 mb-8">
+              <div className="grid grid-cols-3 gap-3 mb-8">
+                {tttState.board.map((cell, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => handleTttClick(idx)}
+                    disabled={tttLoading || gameOver || cell !== null}
+                    className={`aspect-square text-5xl font-bold rounded-lg border-2 transition-all ${
+                      cell === 'X'
+                        ? 'bg-cyan-500 border-cyan-400 text-purple-900'
+                        : cell === 'O'
+                        ? 'bg-magenta-500 border-magenta-400 text-white'
+                        : 'bg-purple-600 border-purple-500 hover:border-cyan-400 cursor-pointer'
+                    }`}
+                  >
+                    {cell}
+                  </button>
                 ))}
               </div>
 
-              {/* Loading shimmer state */}
-              {loading && (
-                <div className="max-w-3xl mx-auto space-y-4">
-                  <div className="flex justify-end">
-                    <div className="max-w-xl bg-purple-600/20 border border-purple-500/30 rounded-lg px-4 py-3">
-                      <p className="text-white">{searchQuery}</p>
-                    </div>
-                  </div>
-
-                  <Card className="bg-slate-800 border-slate-700 p-6">
-                    <div className="space-y-3">
-                      <div className="h-4 bg-slate-700 rounded animate-pulse w-3/4" />
-                      <div className="h-4 bg-slate-700 rounded animate-pulse w-full" />
-                      <div className="h-4 bg-slate-700 rounded animate-pulse w-5/6" />
-                    </div>
-                  </Card>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-
-        {/* Sidebar */}
-        <div
-          className={`fixed inset-y-0 right-0 w-96 bg-slate-800 border-l border-slate-700 transform transition-transform duration-300 z-50 flex flex-col ${
-            showSidebar ? 'translate-x-0' : 'translate-x-full'
-          } md:static md:translate-x-0`}
-        >
-          {/* Sidebar Header */}
-          <div className="flex items-center justify-between p-6 border-b border-slate-700">
-            <h2 className="font-semibold text-lg">Documents</h2>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setShowSidebar(false)}
-              className="md:hidden text-slate-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </Button>
-          </div>
-
-          <ScrollArea className="flex-1">
-            <div className="p-6 space-y-6">
-              {/* Upload Zone */}
-              <div
-                ref={uploadZoneRef}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-600 rounded-lg p-6 cursor-pointer hover:border-purple-500 transition text-center bg-slate-700/20"
-              >
-                <Upload className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-                <p className="text-sm font-medium text-white mb-1">
-                  {uploadingFiles ? 'Processing...' : 'Drag PDFs here or click'}
-                </p>
-                <p className="text-xs text-slate-400">
-                  {uploadingFiles ? 'Indexing documents...' : 'Supports PDF files'}
-                </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  accept=".pdf"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
+              {/* Status */}
+              <div className="text-center mb-4 h-8">
+                {gameOver ? (
+                  tttState.winner === 'X' ? (
+                    <p className="text-green-400 text-lg font-bold">You Won!</p>
+                  ) : tttState.winner === 'O' ? (
+                    <p className="text-red-400 text-lg font-bold">AI Won!</p>
+                  ) : (
+                    <p className="text-yellow-400 text-lg font-bold">Draw!</p>
+                  )
+                ) : (
+                  <p className="text-purple-200">
+                    {tttLoading ? 'AI is thinking...' : 'Your turn (X)'}
+                  </p>
+                )}
               </div>
 
-              {/* Document List */}
-              {documents.length > 0 && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-300">
-                      {documents.length} document{documents.length !== 1 ? 's' : ''}
-                    </h3>
-                    {conversation.length > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={clearConversation}
-                        className="text-xs text-slate-400 hover:text-white"
-                      >
-                        Clear history
-                      </Button>
-                    )}
-                  </div>
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-4 text-center text-sm mb-6">
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Wins</p>
+                  <p className="text-green-400 text-2xl font-bold">{tttState.wins}</p>
+                </div>
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Draws</p>
+                  <p className="text-yellow-400 text-2xl font-bold">{tttState.draws}</p>
+                </div>
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Losses</p>
+                  <p className="text-red-400 text-2xl font-bold">{tttState.losses}</p>
+                </div>
+              </div>
 
-                  {documents.map(doc => (
-                    <Card
-                      key={doc.id}
-                      className="bg-slate-700/50 border-slate-600 p-4 group hover:bg-slate-700/70 transition"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-white text-sm truncate">
-                            {doc.name}
-                          </p>
-                          <p className="text-xs text-slate-400 mt-1">
-                            {doc.pages} pages • {doc.uploadDate}
-                          </p>
+              {/* Controls */}
+              <div className="flex gap-3">
+                <Button
+                  onClick={resetTttGame}
+                  className="flex-1 bg-cyan-500 hover:bg-cyan-600 text-purple-900 font-bold"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  New Game
+                </Button>
+                <Button
+                  onClick={() => {
+                    setCurrentGame('home')
+                    setTttLoading(false)
+                  }}
+                  variant="outline"
+                  className="flex-1 border-cyan-500 text-cyan-400 hover:bg-purple-700"
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  Back Home
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Memory Game Screen
+  if (currentGame === 'memory') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
+        {/* Header */}
+        <header className="sticky top-0 z-40 border-b border-purple-700 bg-purple-900/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto w-full">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500">
+                <Gamepad2 className="w-6 h-6 text-purple-900" />
+              </div>
+              <h1 className="text-2xl font-bold text-white">Game Hub</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="px-4 py-2 rounded-lg bg-purple-800 border border-purple-700">
+                <span className="text-sm text-purple-200">Total Score:</span>
+                <span className="ml-2 text-2xl font-bold text-cyan-400">{totalScore}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Game Screen */}
+        <div className="p-8">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-2">Memory Match</h2>
+
+            <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-magenta-500 p-8 mb-8">
+              {/* Stats */}
+              <div className="grid grid-cols-3 gap-4 text-center text-sm mb-8">
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Pairs Found</p>
+                  <p className="text-magenta-400 text-2xl font-bold">{memoryState.matchedPairs}/8</p>
+                </div>
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Moves</p>
+                  <p className="text-cyan-400 text-2xl font-bold">{memoryState.moves}</p>
+                </div>
+                <div className="bg-purple-700 rounded-lg p-3">
+                  <p className="text-purple-300 text-xs">Time</p>
+                  <p className="text-lime-400 text-2xl font-bold">{Math.floor((Date.now() - memoryState.startTime) / 1000)}s</p>
+                </div>
+              </div>
+
+              {/* Card Grid */}
+              <div className="grid grid-cols-4 gap-3 mb-8">
+                {memoryState.cards.map(card => (
+                  <button
+                    key={card.id}
+                    onClick={() => handleMemoryCardClick(card.id)}
+                    disabled={memoryState.gameWon || memoryState.selectedCards.length >= 2 && !memoryState.selectedCards.includes(card.id)}
+                    className={`aspect-square text-4xl rounded-lg border-2 font-bold transition-all ${
+                      card.isMatched
+                        ? 'bg-magenta-600 border-magenta-400 cursor-default'
+                        : card.isFlipped
+                        ? 'bg-purple-600 border-cyan-400'
+                        : 'bg-purple-600 border-purple-500 hover:border-cyan-400 cursor-pointer hover:bg-purple-500'
+                    }`}
+                  >
+                    {card.isFlipped || card.isMatched ? card.value : '?'}
+                  </button>
+                ))}
+              </div>
+
+              {/* Game Over Modal */}
+              {memoryState.gameWon && (
+                <Dialog open={memoryState.gameWon}>
+                  <DialogContent className="bg-purple-800 border-magenta-500">
+                    <DialogTitle className="text-white text-center">Congratulations!</DialogTitle>
+                    <DialogDescription className="text-center space-y-3">
+                      <p className="text-purple-200">You matched all pairs in {memoryState.moves} moves!</p>
+                      <p className="text-magenta-400 text-lg font-bold">+20 points!</p>
+                    </DialogDescription>
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {/* Controls */}
+              <div className="flex gap-3">
+                <Button
+                  onClick={resetMemoryGame}
+                  className="flex-1 bg-magenta-500 hover:bg-magenta-600 text-white font-bold"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  New Game
+                </Button>
+                <Button
+                  onClick={() => setCurrentGame('home')}
+                  variant="outline"
+                  className="flex-1 border-magenta-500 text-magenta-400 hover:bg-purple-700"
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  Back Home
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Number Guessing Game Screen
+  if (currentGame === 'number') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-purple-800 to-indigo-900">
+        {/* Header */}
+        <header className="sticky top-0 z-40 border-b border-purple-700 bg-purple-900/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto w-full">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-cyan-500">
+                <Gamepad2 className="w-6 h-6 text-purple-900" />
+              </div>
+              <h1 className="text-2xl font-bold text-white">Game Hub</h1>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="px-4 py-2 rounded-lg bg-purple-800 border border-purple-700">
+                <span className="text-sm text-purple-200">Total Score:</span>
+                <span className="ml-2 text-2xl font-bold text-cyan-400">{totalScore}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Game Screen */}
+        <div className="p-8">
+          <div className="max-w-2xl mx-auto">
+            <h2 className="text-4xl font-bold text-white text-center mb-2">Number Guessing</h2>
+
+            <Card className="bg-gradient-to-br from-purple-800 to-purple-700 border-lime-500 p-8 mb-8">
+              {/* Game Info */}
+              <div className="grid grid-cols-2 gap-4 text-center text-sm mb-8">
+                <div className="bg-purple-700 rounded-lg p-4">
+                  <p className="text-purple-300 text-xs">Range</p>
+                  <p className="text-lime-400 text-2xl font-bold">1 - 100</p>
+                </div>
+                <div className="bg-purple-700 rounded-lg p-4">
+                  <p className="text-purple-300 text-xs">Attempts Left</p>
+                  <p className={`text-2xl font-bold ${numberState.attemptsRemaining > 3 ? 'text-lime-400' : 'text-red-400'}`}>
+                    {numberState.attemptsRemaining}
+                  </p>
+                </div>
+              </div>
+
+              {/* Input Area */}
+              <form onSubmit={handleNumberGuess} className="mb-6 space-y-3">
+                <div className="flex gap-3">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="100"
+                    value={numberInput}
+                    onChange={(e) => setNumberInput(e.target.value)}
+                    placeholder="Enter a number..."
+                    disabled={numberState.gameWon || numberState.attemptsRemaining <= 0}
+                    className="flex-1 bg-purple-600 border-lime-500 text-white placeholder-purple-300 focus:border-lime-400"
+                  />
+                  <Button
+                    type="submit"
+                    disabled={numberState.gameWon || numberState.attemptsRemaining <= 0}
+                    className="bg-lime-500 hover:bg-lime-600 text-purple-900 font-bold"
+                  >
+                    Guess
+                  </Button>
+                </div>
+
+                {/* Feedback */}
+                {numberState.feedback && (
+                  <p className={`text-center font-semibold ${
+                    numberState.feedback.includes('Correct')
+                      ? 'text-green-400'
+                      : 'text-red-400'
+                  }`}>
+                    {numberState.feedback}
+                  </p>
+                )}
+              </form>
+
+              {/* Hint Section */}
+              <div className="mb-6">
+                <Button
+                  onClick={getNumberHint}
+                  disabled={hintLoading || numberState.gameWon || numberState.attemptsRemaining <= 0}
+                  variant="outline"
+                  className="w-full border-lime-500 text-lime-400 hover:bg-purple-700 mb-3"
+                >
+                  {hintLoading ? (
+                    <>
+                      <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      Getting hint...
+                    </>
+                  ) : (
+                    'Get Hint'
+                  )}
+                </Button>
+                {hintMessage && (
+                  <Card className="bg-purple-700 border-lime-500/30 p-3">
+                    <p className="text-sm text-lime-200">{hintMessage}</p>
+                  </Card>
+                )}
+              </div>
+
+              {/* Guess History */}
+              {numberState.guesses.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-sm font-semibold text-purple-200 mb-3">Guess History</h3>
+                  <div className="space-y-2">
+                    {numberState.guesses.map((guess, idx) => {
+                      const direction = guess < numberState.secretNumber
+                        ? '↑ Higher'
+                        : guess > numberState.secretNumber
+                        ? '↓ Lower'
+                        : '✓ Correct'
+
+                      return (
+                        <div key={idx} className="flex items-center justify-between bg-purple-700 rounded-lg p-3">
+                          <span className="text-white font-semibold">{guess}</span>
+                          <span className={guess === numberState.secretNumber ? 'text-green-400 font-bold' : 'text-purple-300'}>
+                            {direction}
+                          </span>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => deleteDocument(doc.id)}
-                          className="opacity-0 group-hover:opacity-100 transition text-slate-400 hover:text-red-400"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </Card>
-                  ))}
+                      )
+                    })}
+                  </div>
                 </div>
               )}
 
-              {/* Storage Summary */}
-              {documents.length > 0 && (
-                <Card className="bg-purple-600/10 border-purple-500/30 p-4">
-                  <p className="text-xs text-slate-300 mb-2">Storage Summary</p>
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-white">
-                      {documents.length} document{documents.length !== 1 ? 's' : ''}
-                    </p>
-                    <p className="text-sm font-medium text-white">
-                      {documents.reduce((sum, doc) => sum + doc.pages, 0)} total pages
-                    </p>
+              {/* Stats */}
+              {(numberState.gameWon || numberState.attemptsRemaining === 0) && (
+                <div className="grid grid-cols-2 gap-4 text-center text-sm mb-6">
+                  <div className="bg-purple-700 rounded-lg p-3">
+                    <p className="text-purple-300 text-xs">Games Played</p>
+                    <p className="text-lime-400 text-2xl font-bold">{numberState.played}</p>
                   </div>
-                </Card>
+                  <div className="bg-purple-700 rounded-lg p-3">
+                    <p className="text-purple-300 text-xs">Games Won</p>
+                    <p className="text-lime-400 text-2xl font-bold">{numberState.won}</p>
+                  </div>
+                </div>
               )}
-            </div>
-          </ScrollArea>
+
+              {/* Game Over */}
+              {numberState.attemptsRemaining === 0 && !numberState.gameWon && (
+                <Dialog open={numberState.attemptsRemaining === 0 && !numberState.gameWon}>
+                  <DialogContent className="bg-purple-800 border-lime-500">
+                    <DialogTitle className="text-white text-center">Game Over</DialogTitle>
+                    <DialogDescription className="text-center space-y-3">
+                      <p className="text-purple-200">The secret number was {numberState.secretNumber}</p>
+                      <p className="text-red-400 text-lg font-bold">Try again!</p>
+                    </DialogDescription>
+                  </DialogContent>
+                </Dialog>
+              )}
+
+              {/* Controls */}
+              <div className="flex gap-3">
+                <Button
+                  onClick={resetNumberGame}
+                  className="flex-1 bg-lime-500 hover:bg-lime-600 text-purple-900 font-bold"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  New Game
+                </Button>
+                <Button
+                  onClick={() => setCurrentGame('home')}
+                  variant="outline"
+                  className="flex-1 border-lime-500 text-lime-400 hover:bg-purple-700"
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  Back Home
+                </Button>
+              </div>
+            </Card>
+          </div>
         </div>
       </div>
+    )
+  }
 
-      {/* Mobile overlay */}
-      {showSidebar && (
-        <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
-          onClick={() => setShowSidebar(false)}
-        />
-      )}
-    </div>
-  )
+  return null
 }

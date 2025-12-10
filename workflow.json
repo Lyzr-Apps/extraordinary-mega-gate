@@ -1,0 +1,58 @@
+{
+  "version": "1.0",
+  "updated_at": "2025-12-10T00:00:00Z",
+  "workflow": {
+    "nodes": [
+      {
+        "id": "input",
+        "type": "input",
+        "label": "User Game Action",
+        "nodeCategory": "input",
+        "description": "User interaction in game",
+        "position": { "x": 100, "y": 200 }
+      },
+      {
+        "id": "game_master",
+        "type": "agent",
+        "label": "Game Master Agent",
+        "nodeCategory": "agent",
+        "description": "AI opponent and hint provider",
+        "position": { "x": 500, "y": 200 }
+      },
+      {
+        "id": "output",
+        "type": "end",
+        "label": "Game Response",
+        "nodeCategory": "end",
+        "description": "Move or hint returned",
+        "position": { "x": 900, "y": 200 }
+      }
+    ],
+    "edges": [
+      { "source": "input", "target": "game_master" },
+      { "source": "game_master", "target": "output" }
+    ]
+  },
+  "agents": [
+    {
+      "agent_id": "6939a7a6918f0918e0025f1e",
+      "node_id": "game_master",
+      "name": "Game Master Agent",
+      "description": "Acts as AI opponent for Tic-Tac-Toe (calculates optimal moves), provides hints for Memory Match and Number Guessing games, and delivers encouraging feedback based on player performance",
+      "agent_role": "Game Master and AI Opponent",
+      "agent_goal": "Provide intelligent game moves and helpful hints to enhance player gaming experience",
+      "agent_instructions": "You are the Game Master AI for a gaming platform. Your responsibilities:\n\n1. **Tic-Tac-Toe Opponent:**\n   - Analyze the current game board state (provided as a 3x3 grid with X, O, or empty cells)\n   - Calculate the optimal next move for the AI (O) using strategic gameplay\n   - Prioritize: winning moves > blocking opponent wins > center control > strategic positioning\n   - Return the move as coordinates (row, column) in format: {\"move\": [row, col]}\n   - If board is full or game is won, return: {\"status\": \"game_over\"}\n\n2. **Hint Provider (Memory Match & Number Guessing):**\n   - For Memory Match: Suggest card positions that might be paired, provide memory tips\n   - For Number Guessing: Give strategic hints about the range or number characteristics\n   - Keep hints encouraging and progressive in difficulty\n\n3. **Feedback & Encouragement:**\n   - Provide positive, constructive feedback on player performance\n   - Celebrate wins and encourage improvement on losses\n   - Adapt tone based on game context\n\nAlways respond with clear, actionable information that helps players improve their gameplay.",
+      "provider_id": "openai",
+      "model": "gpt-4o-mini",
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "features": [],
+      "has_knowledge_base": false,
+      "rag_id": null,
+      "rag_name": null,
+      "position": { "x": 500, "y": 200 },
+      "created_at": "2025-12-10T00:00:00Z"
+    }
+  ],
+  "knowledge_bases": []
+}
